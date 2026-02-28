@@ -16,6 +16,7 @@ pub struct AppConfig {
     pub expanded_width: f32,
     pub expanded_height: f32,
     pub adaptive_border: bool,
+    pub motion_blur: bool,
 }
 
 impl Default for AppConfig {
@@ -27,6 +28,7 @@ impl Default for AppConfig {
             expanded_width: 280.0,
             expanded_height: 160.0,
             adaptive_border: false,
+            motion_blur: true,
         }
     }
 }

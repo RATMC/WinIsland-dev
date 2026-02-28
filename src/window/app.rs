@@ -12,6 +12,7 @@ use winit::window::{Window, WindowId, WindowLevel};
 use crate::core::config::{AppConfig, PADDING, TOP_OFFSET, WINDOW_TITLE};
 use crate::core::persistence::load_config;
 use crate::core::render::draw_island;
+use crate::utils::blur::calculate_blur_sigmas;
 use crate::utils::color::get_island_border_weights;
 use crate::utils::mouse::{get_global_cursor_pos, is_point_in_rect};
 use crate::utils::physics::Spring;
@@ -112,11 +113,11 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn window_event(&mut self, event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
+    fn window_event(&mut self, _event_loop: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         if let Some(win) = &self.window {
             if win.id() == id {
                 match event {
-                    WindowEvent::CloseRequested => event_loop.exit(),
+                    WindowEvent::CloseRequested => (),
                     WindowEvent::MouseInput {
                         state: ElementState::Pressed,
                         button: MouseButton::Left,
@@ -154,6 +155,11 @@ impl ApplicationHandler for App {
                     }
                     WindowEvent::RedrawRequested => {
                         if let Some(surface) = self.surface.as_mut() {
+                            let sigmas = if self.config.motion_blur {
+                                calculate_blur_sigmas(self.spring_w.velocity, self.spring_h.velocity)
+                            } else {
+                                (0.0, 0.0)
+                            };
                             draw_island(
                                 surface,
                                 self.spring_w.value,
@@ -162,6 +168,7 @@ impl ApplicationHandler for App {
                                 self.os_w,
                                 self.os_h,
                                 self.border_weights,
+                                sigmas,
                             );
                         }
                     }

@@ -1,37 +1,40 @@
+use crate::core::config::{AppConfig, APP_AUTHOR, APP_HOMEPAGE, APP_VERSION};
+use crate::core::persistence::save_config;
+use skia_safe::{surfaces, Color, Font, FontMgr, FontStyle, Paint, Rect};
+use softbuffer::{Context, Surface};
 use std::sync::Arc;
 use std::time::Duration;
 use winit::application::ApplicationHandler;
-use winit::event::{WindowEvent, MouseButton, ElementState};
-use winit::event_loop::{ActiveEventLoop, EventLoop, ControlFlow};
-use winit::window::{Window, WindowId};
 use winit::dpi::LogicalSize;
-use skia_safe::{Color, Paint, Rect, surfaces, Font, FontStyle, FontMgr};
-use softbuffer::{Context, Surface};
-use crate::core::config::{AppConfig, APP_VERSION, APP_AUTHOR, APP_HOMEPAGE};
-use crate::core::persistence::save_config;
+use winit::event::{ElementState, MouseButton, WindowEvent};
+use winit::event_loop::{ActiveEventLoop, ControlFlow, EventLoop};
+use winit::window::{Window, WindowId};
 
 const SETTINGS_W: f32 = 400.0;
-const SETTINGS_H: f32 = 500.0;
+const SETTINGS_H: f32 = 550.0; // Increased height for new toggle
 
 pub struct SettingsApp {
     window: Option<Arc<Window>>,
     surface: Option<Surface<Arc<Window>, Arc<Window>>>,
     config: AppConfig,
     active_tab: usize,
-    switch_pos: f32,
+    border_switch_pos: f32,
+    blur_switch_pos: f32,
     logical_mouse_pos: (f32, f32),
     font_mgr: FontMgr,
 }
 
 impl SettingsApp {
     pub fn new(config: AppConfig) -> Self {
-        let initial_switch = if config.adaptive_border { 1.0 } else { 0.0 };
+        let initial_border = if config.adaptive_border { 1.0 } else { 0.0 };
+        let initial_blur = if config.motion_blur { 1.0 } else { 0.0 };
         Self {
             window: None,
             surface: None,
             config,
             active_tab: 0,
-            switch_pos: initial_switch,
+            border_switch_pos: initial_border,
+            blur_switch_pos: initial_blur,
             logical_mouse_pos: (0.0, 0.0),
             font_mgr: FontMgr::new(),
         }
@@ -58,11 +61,10 @@ impl SettingsApp {
         
         canvas.scale((scale, scale));
 
-        let (config, active_tab, switch_pos) = (self.config.clone(), self.active_tab, self.switch_pos);
-        self.draw_tabs(canvas, active_tab);
+        self.draw_tabs(canvas);
 
-        if active_tab == 0 {
-            self.draw_general(canvas, &config, switch_pos);
+        if self.active_tab == 0 {
+            self.draw_general(canvas);
         } else {
             self.draw_about(canvas);
         }
@@ -82,7 +84,7 @@ impl SettingsApp {
         }
     }
 
-    fn draw_tabs(&self, canvas: &skia_safe::Canvas, active_tab: usize) {
+    fn draw_tabs(&self, canvas: &skia_safe::Canvas) {
         let font = self.get_font(14.0, true);
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
@@ -94,7 +96,7 @@ impl SettingsApp {
             let bx = center_x - 80.0 + (i as f32 * 80.0);
             let rect = Rect::from_xywh(bx, 20.0, 75.0, 32.0);
             
-            if active_tab == i {
+            if self.active_tab == i {
                 paint.set_color(Color::from_rgb(0, 122, 255));
                 canvas.draw_round_rect(rect, 8.0, 8.0, &paint);
                 paint.set_color(Color::WHITE);
@@ -106,17 +108,17 @@ impl SettingsApp {
         }
     }
 
-    fn draw_general(&self, canvas: &skia_safe::Canvas, config: &AppConfig, switch_pos: f32) {
+    fn draw_general(&self, canvas: &skia_safe::Canvas) {
         let font = self.get_font(14.0, false);
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
 
         let items = [
-            ("Global Scale", format!("{:.2}", config.global_scale)),
-            ("Base Width", config.base_width.to_string()),
-            ("Base Height", config.base_height.to_string()),
-            ("Expanded Width", config.expanded_width.to_string()),
-            ("Expanded Height", config.expanded_height.to_string()),
+            ("Global Scale", format!("{:.2}", self.config.global_scale)),
+            ("Base Width", self.config.base_width.to_string()),
+            ("Base Height", self.config.base_height.to_string()),
+            ("Expanded Width", self.config.expanded_width.to_string()),
+            ("Expanded Height", self.config.expanded_height.to_string()),
         ];
 
         let start_y = 90.0;
@@ -132,10 +134,15 @@ impl SettingsApp {
             self.draw_button(canvas, 345.0, y, "+");
         }
 
-        let sw_y = start_y + (items.len() as f32 * 50.0) + 10.0;
+        let sw_border_y = start_y + (items.len() as f32 * 50.0) + 10.0;
         paint.set_color(Color::from_rgb(50, 50, 50));
-        canvas.draw_str("Adaptive Border", (30.0, sw_y + 18.0), &font, &paint);
-        self.draw_switch(canvas, 326.0, sw_y, switch_pos);
+        canvas.draw_str("Adaptive Border", (30.0, sw_border_y + 18.0), &font, &paint);
+        self.draw_switch(canvas, 326.0, sw_border_y, self.border_switch_pos);
+
+        let sw_blur_y = sw_border_y + 45.0;
+        paint.set_color(Color::from_rgb(50, 50, 50));
+        canvas.draw_str("Motion Blur", (30.0, sw_blur_y + 18.0), &font, &paint);
+        self.draw_switch(canvas, 326.0, sw_blur_y, self.blur_switch_pos);
 
         paint.set_color(Color::from_rgb(255, 59, 48));
         canvas.draw_str("Reset to Defaults", (center_text_x(SETTINGS_W, "Reset to Defaults", &font), SETTINGS_H - 60.0), &font, &paint);
@@ -226,9 +233,15 @@ impl SettingsApp {
             self.check_btn(mx, my, 270.0, start_y + 200.0, |c| c.expanded_height -= 10.0, &mut state_changed);
             self.check_btn(mx, my, 345.0, start_y + 200.0, |c| c.expanded_height += 10.0, &mut state_changed);
             
-            let sw_y = start_y + (5.0 * 50.0) + 10.0;
-            if mx >= 320.0 && mx <= 380.0 && my >= sw_y && my <= sw_y + 35.0 {
+            let sw_border_y = start_y + (5.0 * 50.0) + 10.0;
+            if mx >= 320.0 && mx <= 380.0 && my >= sw_border_y && my <= sw_border_y + 35.0 {
                 self.config.adaptive_border = !self.config.adaptive_border;
+                state_changed = true;
+            }
+
+            let sw_blur_y = sw_border_y + 45.0;
+            if mx >= 320.0 && mx <= 380.0 && my >= sw_blur_y && my <= sw_blur_y + 35.0 {
+                self.config.motion_blur = !self.config.motion_blur;
                 state_changed = true;
             }
 
@@ -314,13 +327,29 @@ impl ApplicationHandler for SettingsApp {
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
         if let Some(win) = &self.window {
-            let target = if self.config.adaptive_border { 1.0 } else { 0.0 };
-            let diff = target - self.switch_pos;
-            if diff.abs() > 0.01 {
-                self.switch_pos += diff * 0.2;
-                win.request_redraw();
-            } else if self.switch_pos != target {
-                self.switch_pos = target;
+            let mut needs_redraw = false;
+            
+            let target_border = if self.config.adaptive_border { 1.0 } else { 0.0 };
+            let diff_border = target_border - self.border_switch_pos;
+            if diff_border.abs() > 0.01 {
+                self.border_switch_pos += diff_border * 0.2;
+                needs_redraw = true;
+            } else if self.border_switch_pos != target_border {
+                self.border_switch_pos = target_border;
+                needs_redraw = true;
+            }
+
+            let target_blur = if self.config.motion_blur { 1.0 } else { 0.0 };
+            let diff_blur = target_blur - self.blur_switch_pos;
+            if diff_blur.abs() > 0.01 {
+                self.blur_switch_pos += diff_blur * 0.2;
+                needs_redraw = true;
+            } else if self.blur_switch_pos != target_blur {
+                self.blur_switch_pos = target_blur;
+                needs_redraw = true;
+            }
+
+            if needs_redraw {
                 win.request_redraw();
             }
             std::thread::sleep(Duration::from_millis(16));

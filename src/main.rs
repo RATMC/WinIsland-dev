@@ -5,8 +5,12 @@ mod window;
 mod utils;
 
 use crate::window::app::App;
-use winit::event_loop::EventLoop;
 use std::env;
+use windows::core::w;
+use windows::Win32::Foundation::GetLastError;
+use windows::Win32::Foundation::ERROR_ALREADY_EXISTS;
+use windows::Win32::System::Threading::CreateMutexW;
+use winit::event_loop::EventLoop;
 
 fn main() {
     let args: Vec<String> = env::args().collect();
@@ -15,6 +19,14 @@ fn main() {
         let config = crate::core::persistence::load_config();
         crate::window::settings::run_settings(config);
     } else {
+        // Single Instance Check
+        unsafe {
+            let _ = CreateMutexW(None, true, w!("Global\\WinIsland_SingleInstance_Mutex"));
+            if GetLastError() == ERROR_ALREADY_EXISTS {
+                return;
+            }
+        }
+
         let event_loop = EventLoop::new().unwrap();
         let mut app = App::default();
         event_loop.run_app(&mut app).unwrap();

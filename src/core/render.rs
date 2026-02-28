@@ -1,5 +1,5 @@
 use crate::core::config::PADDING;
-use skia_safe::{gradient_shader, surfaces, Color, Paint, Point, RRect, Rect};
+use skia_safe::{gradient_shader, image_filters, surfaces, Color, Paint, Point, RRect, Rect};
 use softbuffer::Surface;
 use std::sync::Arc;
 use winit::window::Window;
@@ -12,6 +12,7 @@ pub fn draw_island(
     os_w: u32,
     os_h: u32,
     weights: [f32; 4],
+    sigmas: (f32, f32),
 ) {
     let mut buffer = surface.buffer_mut().unwrap();
 
@@ -23,12 +24,26 @@ pub fn draw_island(
     let offset_x = (os_w as f32 - current_w) / 2.0;
     let offset_y = PADDING / 2.0;
     
-    let rect = Rect::from_xywh(offset_x, offset_y, current_w, current_h);
+    // Smear effect: slightly expand the rect in the direction of motion
+    let smear_x = sigmas.0 * 0.5;
+    let smear_y = sigmas.1 * 0.5;
+    let rect = Rect::from_xywh(
+        offset_x - smear_x / 2.0, 
+        offset_y - smear_y / 2.0, 
+        current_w + smear_x, 
+        current_h + smear_y
+    );
     let rrect = RRect::new_rect_xy(rect, current_r, current_r);
 
     let mut paint = Paint::default();
     paint.set_color(Color::BLACK);
     paint.set_anti_alias(true);
+
+    if sigmas.0 > 0.1 || sigmas.1 > 0.1 {
+        if let Some(blur_filter) = image_filters::blur(sigmas, None, None, None) {
+            paint.set_image_filter(blur_filter);
+        }
+    }
 
     canvas.draw_rrect(rrect, &paint);
 
@@ -46,7 +61,7 @@ pub fn draw_island(
 
         let stops = [0.0, 0.25, 0.5, 0.75, 1.0];
         
-        let shader = gradient_shader::sweep(
+        if let Some(shader) = gradient_shader::sweep(
             center,
             &colors[..],
             Some(&stops[..]),
@@ -54,14 +69,20 @@ pub fn draw_island(
             None,
             None,
             None,
-        );
-
-        if let Some(shader) = shader {
+        ) {
             let mut stroke_paint = Paint::default();
             stroke_paint.set_shader(shader);
             stroke_paint.set_style(skia_safe::paint::Style::Stroke);
             stroke_paint.set_stroke_width(1.3);
             stroke_paint.set_anti_alias(true);
+            
+            // Apply the same blur to the stroke for consistency
+            if sigmas.0 > 0.1 || sigmas.1 > 0.1 {
+                if let Some(blur_filter) = image_filters::blur(sigmas, None, None, None) {
+                    stroke_paint.set_image_filter(blur_filter);
+                }
+            }
+            
             canvas.draw_rrect(rrect, &stroke_paint);
         }
     }
