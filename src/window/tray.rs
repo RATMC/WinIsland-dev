@@ -1,6 +1,6 @@
-use tray_icon::menu::{Menu, MenuItem, MenuEvent};
-use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 use crate::core::config::WINDOW_TITLE;
+use tray_icon::menu::{Menu, MenuEvent, MenuItem};
+use tray_icon::{Icon, TrayIcon, TrayIconBuilder};
 
 pub struct TrayManager {
     _tray: TrayIcon,

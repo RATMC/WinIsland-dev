@@ -1,8 +1,8 @@
-use skia_safe::{Color, Paint, Rect, RRect, surfaces, gradient_shader, Point};
+use crate::core::config::PADDING;
+use skia_safe::{gradient_shader, surfaces, Color, Paint, Point, RRect, Rect};
 use softbuffer::Surface;
 use std::sync::Arc;
 use winit::window::Window;
-use crate::core::config::PADDING;
 
 pub fn draw_island(
     surface: &mut Surface<Arc<Window>, Arc<Window>>,

@@ -1,5 +1,5 @@
-use windows::Win32::Graphics::Gdi::{GetDC, GetPixel, ReleaseDC, HDC};
 use windows::Win32::Foundation::HWND;
+use windows::Win32::Graphics::Gdi::{GetDC, GetPixel, ReleaseDC, HDC};
 
 pub struct ColorSampler {
     hdc: HDC,

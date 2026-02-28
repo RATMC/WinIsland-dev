@@ -9,17 +9,14 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::platform::windows::WindowAttributesExtWindows;
 use winit::window::{Window, WindowId, WindowLevel};
 
-use windows::Win32::Foundation::POINT;
-use windows::Win32::UI::WindowsAndMessaging::GetCursorPos;
-
 use crate::core::config::{
     BASE_HEIGHT, BASE_WIDTH, EXPANDED_HEIGHT, EXPANDED_WIDTH, PADDING, TOP_OFFSET, WINDOW_TITLE,
 };
 use crate::core::render::draw_island;
+use crate::utils::color::get_island_border_weights;
 use crate::utils::mouse::{get_global_cursor_pos, is_point_in_rect};
 use crate::utils::physics::Spring;
-use crate::utils::color::get_island_border_weights;
-use crate::window::tray::{TrayManager, TrayAction};
+use crate::window::tray::{TrayAction, TrayManager};
 
 pub struct App {
     window: Option<Arc<Window>>,

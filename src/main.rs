@@ -4,8 +4,8 @@ mod core;
 mod window;
 mod utils;
 
-use winit::event_loop::EventLoop;
 use crate::window::app::App;
+use winit::event_loop::EventLoop;
 
 fn main() {
     let event_loop = EventLoop::new().unwrap();
