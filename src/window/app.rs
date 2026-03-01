@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use softbuffer::{Context, Surface};
 use winit::application::ApplicationHandler;
@@ -17,6 +17,7 @@ use crate::utils::color::get_island_border_weights;
 use crate::utils::mouse::{get_global_cursor_pos, is_point_in_rect};
 use crate::utils::physics::Spring;
 use crate::core::smtc::SmtcListener;
+use crate::core::audio::AudioProcessor;
 use crate::window::tray::{TrayAction, TrayManager};
 
 pub struct App {
@@ -24,6 +25,7 @@ pub struct App {
     surface: Option<Surface<Arc<Window>, Arc<Window>>>,
     tray: Option<TrayManager>,
     smtc: SmtcListener,
+    audio: AudioProcessor,
 
     config: AppConfig,
     expanded: bool,
@@ -47,6 +49,7 @@ pub struct App {
 
     last_media_title: String,
     last_media_playing: bool,
+    last_frame_time: Instant,
 }
 
 impl Default for App {
@@ -67,6 +70,7 @@ impl Default for App {
             spring_r: Spring::new((config.base_height * config.global_scale) / 2.0),
             spring_view: Spring::new(0.0),
             smtc: SmtcListener::new(),
+            audio: AudioProcessor::new(),
             os_w: 0,
             os_h: 0,
             win_x: 0,
@@ -74,6 +78,7 @@ impl Default for App {
             frame_count: 0,
             last_media_title: String::new(),
             last_media_playing: false,
+            last_frame_time: Instant::now(),
         }
     }
 }
@@ -230,11 +235,14 @@ impl ApplicationHandler for App {
                             let dist_w = (self.spring_w.value - self.config.base_width * self.config.global_scale).abs();
                             let progress = (dist_w / total_w).clamp(0.0, 1.0);
 
-                            let media_info = if self.config.smtc_enabled {
+                            let mut media_info = if self.config.smtc_enabled {
                                 self.smtc.get_info()
                             } else {
                                 crate::core::smtc::MediaInfo::default()
                             };
+                            
+                            // 更新真实的音频频谱
+                            media_info.spectrum = self.audio.get_spectrum();
 
                             draw_island(
                                 surface,
@@ -259,6 +267,8 @@ impl ApplicationHandler for App {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if let Some(window) = &self.window {
+            let frame_start = Instant::now();
+            
             if let Some(tray) = &self.tray {
                 if let Ok(event) = tray_icon::menu::MenuEvent::receiver().try_recv() {
                     match TrayAction::from_id(event.id, tray) {
@@ -349,62 +359,27 @@ impl ApplicationHandler for App {
 
             if self.config.smtc_enabled {
                 let media = self.smtc.get_info();
-                if media.title != self.last_media_title || media.is_playing != self.last_media_playing {
+                self.last_media_playing = media.is_playing;
+                if media.title != self.last_media_title {
                     self.last_media_title = media.title.clone();
-                    self.last_media_playing = media.is_playing;
                     window.request_redraw();
                 }
             }
 
-            if border_changed {
+            self.spring_w.update((if self.expanded { self.config.expanded_width } else { self.config.base_width }) * self.config.global_scale, 0.11, 0.70);
+            self.spring_h.update((if self.expanded { self.config.expanded_height } else { self.config.base_height }) * self.config.global_scale, 0.11, 0.70);
+            self.spring_r.update((if self.expanded { 32.0 } else { self.config.base_height / 2.0 }) * self.config.global_scale, 0.11, 0.70);
+            self.spring_view.update(if self.tools_view { 1.0 } else { 0.0 }, 0.12, 0.58);
+
+            if self.expanded || self.spring_w.velocity.abs() > 0.01 || self.spring_h.velocity.abs() > 0.01 {
                 window.request_redraw();
             }
 
-            let target_w = (if self.expanded {
-                self.config.expanded_width
-            } else {
-                self.config.base_width
-            }) * self.config.global_scale;
-            let target_h = (if self.expanded {
-                self.config.expanded_height
-            } else {
-                self.config.base_height
-            }) * self.config.global_scale;
-            let target_r = if self.expanded {
-                32.0 * self.config.global_scale
-            } else {
-                (self.config.base_height * self.config.global_scale) / 2.0
-            };
-
-            let target_view = if self.tools_view { 1.0 } else { 0.0 };
-
-            let total_w = (self.config.expanded_width - self.config.base_width)
-                .abs()
-                .max(1.0) * self.config.global_scale;
-            let dist_w = (target_w - self.spring_w.value).abs();
-            let ratio = (dist_w / total_w).clamp(0.0, 1.0);
-
-            let (stiffness, damping) = if self.expanded {
-                let s = 0.11 * (1.0 - ratio * 0.6).max(0.4);
-                (s, 0.70)
-            } else {
-                (0.11, 0.65)
-            };
-
-            self.spring_w.update(target_w, stiffness, damping);
-            self.spring_h.update(target_h, stiffness, damping);
-            self.spring_r.update(target_r, stiffness, damping);
-            self.spring_view.update(target_view, 0.12, 0.58);
-
-            if self.spring_w.velocity.abs() > 0.01
-                || self.spring_h.velocity.abs() > 0.01
-                || self.spring_r.velocity.abs() > 0.01
-                || self.spring_view.velocity.abs() > 0.001
-            {
-                window.request_redraw();
+            let elapsed = frame_start.elapsed();
+            let target_frame_time = Duration::from_micros(16666);
+            if elapsed < target_frame_time {
+                std::thread::sleep(target_frame_time - elapsed);
             }
-
-            std::thread::sleep(Duration::from_millis(16));
         }
     }
 }

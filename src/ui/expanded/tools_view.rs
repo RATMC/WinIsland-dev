@@ -4,7 +4,7 @@ use crate::icons::settings::draw_settings_icon;
 use crate::icons::music::draw_music_icon;
 
 pub fn draw_tools_page(canvas: &Canvas, ox: f32, oy: f32, w: f32, h: f32, alpha: u8) {
-    draw_arrow_left(canvas, ox + 20.0, oy + h / 2.0, alpha);
+    draw_arrow_left(canvas, ox + 12.0, oy + h / 2.0, alpha);
     draw_watch_grid_tools(canvas, ox, oy, w, h, alpha);
 }
 

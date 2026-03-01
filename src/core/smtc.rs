@@ -1,11 +1,10 @@
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use windows::Media::Control::{
     GlobalSystemMediaTransportControlsSessionManager,
     GlobalSystemMediaTransportControlsSession,
-    GlobalSystemMediaTransportControlsSessionMediaProperties,
 };
 use windows::Foundation::TypedEventHandler;
-use windows::Storage::Streams::{DataReader, Buffer};
 
 #[derive(Clone, Default, Debug)]
 pub struct MediaInfo {
@@ -14,17 +13,20 @@ pub struct MediaInfo {
     pub album: String,
     pub is_playing: bool,
     pub app_id: String,
-    pub thumbnail: Option<Vec<u8>>,
+    pub thumbnail: Option<Arc<Vec<u8>>>,
+    pub spectrum: [f32; 6],
 }
 
 pub struct SmtcListener {
     info: Arc<Mutex<MediaInfo>>,
+    active: Arc<AtomicBool>,
 }
 
 impl SmtcListener {
     pub fn new() -> Self {
         let listener = Self {
             info: Arc::new(Mutex::new(MediaInfo::default())),
+            active: Arc::new(AtomicBool::new(true)),
         };
         listener.init();
         listener
@@ -34,76 +36,78 @@ impl SmtcListener {
         self.info.lock().unwrap().clone()
     }
 
+    pub fn set_spectrum(&self, spectrum: [f32; 6]) {
+        if let Ok(mut info) = self.info.lock() {
+            info.spectrum = spectrum;
+        }
+    }
+
     fn init(&self) {
         let info_clone = self.info.clone();
+        let active_clone = self.active.clone();
+        
         std::thread::spawn(move || {
-            let manager_op = GlobalSystemMediaTransportControlsSessionManager::RequestAsync();
-            if let Ok(manager_async) = manager_op {
-                if let Ok(manager) = manager_async.get() {
-                    let manager: GlobalSystemMediaTransportControlsSessionManager = manager;
-                    let _ = Self::update_all(&manager, &info_clone);
+            let manager = match GlobalSystemMediaTransportControlsSessionManager::RequestAsync() {
+                Ok(op) => match op.get() {
+                    Ok(m) => m,
+                    Err(_) => return,
+                },
+                Err(_) => return,
+            };
 
-                    let info_for_handler = info_clone.clone();
-                    let handler = TypedEventHandler::new(move |m: &Option<GlobalSystemMediaTransportControlsSessionManager>, _| {
-                        if let Some(mgr) = m {
-                            let _ = Self::update_all(mgr, &info_for_handler);
-                        }
-                        Ok(())
-                    });
-                    let _ = manager.SessionsChanged(&handler);
-
-                    loop {
-                        std::thread::sleep(std::time::Duration::from_secs(2));
-                        let _ = Self::update_all(&manager, &info_clone);
+            let update_info = |mgr: &GlobalSystemMediaTransportControlsSessionManager, arc: &Arc<Mutex<MediaInfo>>| {
+                if let Ok(session) = mgr.GetCurrentSession() {
+                    let _ = Self::fetch_properties(&session, arc);
+                } else {
+                    if let Ok(mut info) = arc.lock() {
+                        *info = MediaInfo::default();
                     }
                 }
+            };
+
+            update_info(&manager, &info_clone);
+
+            let info_for_handler = info_clone.clone();
+            let handler = TypedEventHandler::new(move |m: &Option<GlobalSystemMediaTransportControlsSessionManager>, _| {
+                if let Some(mgr) = m {
+                    let _ = update_info(mgr, &info_for_handler);
+                }
+                Ok(())
+            });
+            let _ = manager.SessionsChanged(&handler);
+
+            while active_clone.load(Ordering::Relaxed) {
+                update_info(&manager, &info_clone);
+                std::thread::sleep(std::time::Duration::from_millis(500));
             }
         });
     }
 
-    fn update_all(manager: &GlobalSystemMediaTransportControlsSessionManager, info_arc: &Arc<Mutex<MediaInfo>>) -> windows::core::Result<()> {
-        if let Ok(session) = manager.GetCurrentSession() {
-            Self::update_session(&session, info_arc)?;
-        } else {
-            let mut info = info_arc.lock().unwrap();
-            *info = MediaInfo::default();
-        }
-        Ok(())
-    }
-
-    fn update_session(session: &GlobalSystemMediaTransportControlsSession, info_arc: &Arc<Mutex<MediaInfo>>) -> windows::core::Result<()> {
-        let app_id = session.SourceAppUserModelId()?.to_string();
-        let props_async = session.TryGetMediaPropertiesAsync()?;
-        let props: GlobalSystemMediaTransportControlsSessionMediaProperties = props_async.get()?;
-        
+    fn fetch_properties(session: &GlobalSystemMediaTransportControlsSession, info_arc: &Arc<Mutex<MediaInfo>>) -> windows::core::Result<()> {
+        let props = session.TryGetMediaPropertiesAsync()?.get()?;
         let pb_info = session.GetPlaybackInfo()?;
         let is_playing = pb_info.PlaybackStatus()? == windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus::Playing;
-
-        let thumb_bytes = if let Ok(thumb_ref) = props.Thumbnail() {
-            if let Ok(stream_async) = thumb_ref.OpenReadAsync() {
-                if let Ok(stream) = stream_async.get() {
-                    let size = stream.Size()? as u32;
-                    let buffer = Buffer::Create(size)?;
-                    if let Ok(read_async) = stream.ReadAsync(&buffer, size, windows::Storage::Streams::InputStreamOptions::None) {
-                        if let Ok(res_buffer) = read_async.get() {
-                            let reader = DataReader::FromBuffer(&res_buffer)?;
-                            let mut bytes = vec![0u8; size as usize];
-                            reader.ReadBytes(&mut bytes)?;
-                            Some(bytes)
-                        } else { None }
-                    } else { None }
-                } else { None }
-            } else { None }
-        } else { None };
-
-        let mut info = info_arc.lock().unwrap();
-        info.title = props.Title()?.to_string();
-        info.artist = props.Artist()?.to_string();
-        info.album = props.AlbumTitle()?.to_string();
-        info.is_playing = is_playing;
-        info.app_id = app_id;
-        info.thumbnail = thumb_bytes;
         
+        let mut thumb_data = None;
+        if let Ok(thumb_ref) = props.Thumbnail() {
+            if let Ok(stream) = thumb_ref.OpenReadAsync()?.get() {
+                let size = stream.Size()? as u32;
+                let buffer = windows::Storage::Streams::Buffer::Create(size)?;
+                let res_buffer = stream.ReadAsync(&buffer, size, windows::Storage::Streams::InputStreamOptions::None)?.get()?;
+                let reader = windows::Storage::Streams::DataReader::FromBuffer(&res_buffer)?;
+                let mut bytes = vec![0u8; size as usize];
+                reader.ReadBytes(&mut bytes)?;
+                thumb_data = Some(Arc::new(bytes));
+            }
+        }
+
+        if let Ok(mut info) = info_arc.lock() {
+            info.title = props.Title()?.to_string();
+            info.artist = props.Artist()?.to_string();
+            info.album = props.AlbumTitle()?.to_string();
+            info.is_playing = is_playing;
+            info.thumbnail = thumb_data;
+        }
         Ok(())
     }
 }

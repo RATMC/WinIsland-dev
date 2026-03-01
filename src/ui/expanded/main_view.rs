@@ -1,6 +1,7 @@
 use skia_safe::{
     Canvas, Paint, Color, Font, FontStyle, FontMgr, Rect, RRect,
-    PathBuilder, Point, Data, Image, SamplingOptions, FilterMode, MipmapMode, Typeface
+    PathBuilder, Point, Data, Image, SamplingOptions, FilterMode, MipmapMode, Typeface,
+    gradient_shader, TileMode
 };
 use crate::icons::arrows::draw_arrow_right;
 use crate::core::smtc::MediaInfo;
@@ -11,11 +12,9 @@ thread_local! {
     static IMG_CACHE: RefCell<Option<(String, Image)>> = RefCell::new(None);
     static FONT_MGR: FontMgr = FontMgr::new();
     static FALLBACK_CACHE: RefCell<HashMap<(char, u32), Typeface>> = RefCell::new(HashMap::new());
-    static TEXT_CACHE: RefCell<HashMap<String, String>> = RefCell::new(HashMap::new());
-}
-
-fn get_font_mgr() -> FontMgr {
-    FONT_MGR.with(|mgr| mgr.clone())
+    static TEXT_CACHE: RefCell<HashMap<String, (String, Vec<(String, Typeface)>)>> = RefCell::new(HashMap::new());
+    static COLOR_CACHE: RefCell<HashMap<String, Vec<Color>>> = RefCell::new(HashMap::new());
+    static VIZ_HEIGHTS: RefCell<[f32; 6]> = RefCell::new([3.0; 6]);
 }
 
 fn style_to_key(style: FontStyle) -> u32 {
@@ -29,81 +28,78 @@ fn get_typeface_for_char(c: char, style: FontStyle) -> Typeface {
     let s_key = style_to_key(style);
     FALLBACK_CACHE.with(|cache| {
         let mut cache = cache.borrow_mut();
-        if let Some(tf) = cache.get(&(c, s_key)) {
-            return tf.clone();
-        }
-        
-        let mgr = get_font_mgr();
-        let tf = mgr.match_family_style_character("", style, &["zh-CN", "ja-JP", "en-US"], c as i32)
-            .unwrap_or_else(|| mgr.legacy_make_typeface(None, style).unwrap());
-        
+        if let Some(tf) = cache.get(&(c, s_key)) { return tf.clone(); }
+        let tf = FONT_MGR.with(|mgr| mgr.match_family_style_character("", style, &["zh-CN", "ja-JP", "en-US"], c as i32))
+            .unwrap_or_else(|| FONT_MGR.with(|mgr| mgr.legacy_make_typeface(None, style).unwrap()));
         cache.insert((c, s_key), tf.clone());
         tf
     })
 }
 
-fn draw_text_optimized(canvas: &Canvas, text: &str, pos: (f32, f32), size: f32, style: FontStyle, paint: &Paint) {
-    let mut current_x = pos.0.round();
-    let y = pos.1.round();
-    
-    let mut group_text = String::new();
-    let mut last_tf: Option<Typeface> = None;
-
-    for c in text.chars() {
-        let tf = get_typeface_for_char(c, style);
-        
-        if let Some(ref ltf) = last_tf {
-            if ltf.unique_id() != tf.unique_id() {
-                let font = Font::from_typeface(ltf.clone(), size);
-                canvas.draw_str(&group_text, (current_x, y), &font, paint);
-                let (w, _) = font.measure_str(&group_text, None);
-                current_x += w;
-                group_text.clear();
+fn draw_text_cached(canvas: &Canvas, text: &str, pos: (f32, f32), size: f32, style: FontStyle, paint: &Paint, align_center: bool, max_w: f32) {
+    let cache_key = format!("{}-{}-{:?}-{}", text, max_w, style, size);
+    TEXT_CACHE.with(|cache| {
+        let mut cache_mut = cache.borrow_mut();
+        if !cache_mut.contains_key(&cache_key) {
+            let mut current_w = 0.0;
+            let mut truncated = String::new();
+            for c in text.chars() {
+                let tf = get_typeface_for_char(c, style);
+                let font = Font::from_typeface(tf, size);
+                let (w, _) = font.measure_str(&c.to_string(), None);
+                if current_w + w > max_w { truncated.push_str("..."); break; }
+                current_w += w; truncated.push(c);
             }
-            group_text.push(c);
-        } else {
-            group_text.push(c);
+            let mut groups = Vec::new();
+            let mut current_group = String::new();
+            let mut last_tf: Option<Typeface> = None;
+            for c in truncated.chars() {
+                let tf = get_typeface_for_char(c, style);
+                if let Some(ref ltf) = last_tf {
+                    if ltf.unique_id() != tf.unique_id() {
+                        groups.push((current_group.clone(), ltf.clone()));
+                        current_group.clear();
+                    }
+                }
+                last_tf = Some(tf); current_group.push(c);
+            }
+            if let Some(ltf) = last_tf { groups.push((current_group, ltf)); }
+            cache_mut.insert(cache_key.clone(), (truncated, groups));
         }
-        last_tf = Some(tf);
-    }
-
-    if let Some(ltf) = last_tf {
-        let font = Font::from_typeface(ltf, size);
-        canvas.draw_str(&group_text, (current_x, y), &font, paint);
-    }
+        let (_, groups) = cache_mut.get(&cache_key).unwrap();
+        let mut total_width = 0.0;
+        if align_center {
+            for (s, tf) in groups {
+                let font = Font::from_typeface(tf.clone(), size);
+                let (w, _) = font.measure_str(s, None);
+                total_width += w;
+            }
+        }
+        let mut x = if align_center { pos.0 - total_width / 2.0 } else { pos.0 };
+        let y = pos.1.round();
+        for (s, tf) in groups {
+            let font = Font::from_typeface(tf.clone(), size);
+            canvas.draw_str(s, (x.round(), y), &font, paint);
+            let (w, _) = font.measure_str(s, None);
+            x += w;
+        }
+    });
 }
 
 pub fn draw_main_page(canvas: &Canvas, ox: f32, oy: f32, w: f32, h: f32, alpha: u8, media: &MediaInfo) {
-    draw_arrow_right(canvas, ox + w - 20.0, oy + h / 2.0, alpha);
+    draw_arrow_right(canvas, ox + w - 12.0, oy + h / 2.0, alpha);
 
     if media.title.is_empty() {
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
         paint.set_color(Color::from_argb((alpha as f32 * 0.5) as u8, 255, 255, 255));
-        draw_text_optimized(canvas, "No Media Playing", (ox + 30.0, oy + 45.0), 13.0, FontStyle::normal(), &paint);
+        draw_text_cached(canvas, "No Media Playing", (ox + w / 2.0, oy + h / 2.0), 13.0, FontStyle::normal(), &paint, true, w);
         return;
     }
 
-    let card_w = 180.0;
-    let card_h = 56.0;
-    let card_x = ox + 20.0;
-    let card_y = oy + 16.0;
-
-    let mut card_paint = Paint::default();
-    card_paint.set_anti_alias(true);
-    card_paint.set_color(Color::from_argb((alpha as f32 * 0.3) as u8, 40, 40, 45));
-    canvas.draw_round_rect(Rect::from_xywh(card_x, card_y, card_w, card_h), 14.0, 14.0, &card_paint);
-
-    let mut border_paint = Paint::default();
-    border_paint.set_anti_alias(true);
-    border_paint.set_style(skia_safe::paint::Style::Stroke);
-    border_paint.set_stroke_width(0.5);
-    border_paint.set_color(Color::from_argb((alpha as f32 * 0.1) as u8, 255, 255, 255));
-    canvas.draw_round_rect(Rect::from_xywh(card_x, card_y, card_w, card_h), 14.0, 14.0, &border_paint);
-
-    let img_size = 40.0;
-    let img_x = card_x + 8.0;
-    let img_y = card_y + 8.0;
+    let img_size = 72.0;
+    let img_x = ox + 24.0;
+    let img_y = oy + 24.0;
 
     let cache_key = format!("{}-{}", media.title, media.album);
     let mut image_to_draw = None;
@@ -113,8 +109,8 @@ pub fn draw_main_page(canvas: &Canvas, ox: f32, oy: f32, w: f32, h: f32, alpha: 
         if let Some((key, img)) = cache_mut.as_ref() {
             if key == &cache_key { image_to_draw = Some(img.clone()); return; }
         }
-        if let Some(ref bytes) = media.thumbnail {
-            let data = Data::new_copy(bytes);
+        if let Some(ref bytes_arc) = media.thumbnail {
+            let data = Data::new_copy(&**bytes_arc);
             if let Some(image) = Image::from_encoded(data) {
                 *cache_mut = Some((cache_key.clone(), image.clone()));
                 image_to_draw = Some(image);
@@ -122,8 +118,14 @@ pub fn draw_main_page(canvas: &Canvas, ox: f32, oy: f32, w: f32, h: f32, alpha: 
         }
     });
 
+    let palette = if let Some(ref img) = image_to_draw {
+        get_palette_from_image(img, &cache_key)
+    } else {
+        vec![Color::from_rgb(180, 180, 180), Color::from_rgb(100, 100, 100)]
+    };
+
     canvas.save();
-    canvas.clip_rrect(RRect::new_rect_xy(Rect::from_xywh(img_x, img_y, img_size, img_size), 10.0, 10.0), skia_safe::ClipOp::Intersect, true);
+    canvas.clip_rrect(RRect::new_rect_xy(Rect::from_xywh(img_x, img_y, img_size, img_size), 14.0, 14.0), skia_safe::ClipOp::Intersect, true);
     if let Some(img) = image_to_draw {
         let mut img_paint = Paint::default();
         img_paint.set_anti_alias(true);
@@ -137,45 +139,127 @@ pub fn draw_main_page(canvas: &Canvas, ox: f32, oy: f32, w: f32, h: f32, alpha: 
     }
     canvas.restore();
 
-    let text_x = img_x + img_size + 12.0;
-    let max_text_w = card_w - (img_size + 32.0);
-    let text_start_y = card_y + 22.0;
+    let text_x = img_x + img_size + 16.0;
+    let max_text_w = w - (text_x - ox) - 100.0;
+    let title_y = img_y + 26.0;
 
     let mut text_paint = Paint::default();
     text_paint.set_anti_alias(true);
-
+    
     text_paint.set_color(Color::from_argb(alpha, 255, 255, 255));
-    let title_disp = get_truncated_text(&media.title, max_text_w, 13.0, FontStyle::bold());
-    draw_text_optimized(canvas, &title_disp, (text_x, text_start_y), 13.0, FontStyle::bold(), &text_paint);
+    draw_text_cached(canvas, &media.title, (text_x, title_y), 15.0, FontStyle::bold(), &text_paint, false, max_text_w);
 
     text_paint.set_color(Color::from_argb((alpha as f32 * 0.6) as u8, 255, 255, 255));
-    let artist_disp = get_truncated_text(&media.artist, max_text_w, 11.0, FontStyle::normal());
-    draw_text_optimized(canvas, &artist_disp, (text_x, text_start_y + 18.0), 11.0, FontStyle::normal(), &text_paint);
+    draw_text_cached(canvas, &media.artist, (text_x, title_y + 22.0), 15.0, FontStyle::normal(), &text_paint, false, max_text_w);
+
+    draw_visualizer(canvas, ox + w - 45.0, title_y - 4.0, alpha, media.is_playing, &palette, &media.spectrum);
 }
 
-fn get_truncated_text(text: &str, max_w: f32, size: f32, style: FontStyle) -> String {
-    let key = format!("{}-{}-{:?}-{}", text, max_w, style, size);
-    TEXT_CACHE.with(|cache| {
-        let mut cache = cache.borrow_mut();
-        if let Some(t) = cache.get(&key) {
-            return t.clone();
+fn draw_visualizer(canvas: &Canvas, x: f32, y: f32, alpha: u8, is_playing: bool, palette: &[Color], spectrum: &[f32; 6]) {
+    let bar_count = 6;
+    let bar_w = 3.0;
+    let spacing = 2.0;
+    let max_h = 28.0;
+
+    VIZ_HEIGHTS.with(|h_cell| {
+        let mut heights = h_cell.borrow_mut();
+        
+        for i in 0..bar_count {
+            let target = if is_playing { (spectrum[i] * max_h).max(3.0) } else { 3.0 };
+            
+            if target > heights[i] {
+                heights[i] = heights[i] * 0.5 + target * 0.5;
+            } else {
+                heights[i] = heights[i] * 0.92 + target * 0.08;
+            }
+            heights[i] = heights[i].max(3.0);
+        }
+
+        let start_x = x - (bar_count as f32 * (bar_w + spacing)) / 2.0;
+        let mut paint = Paint::default();
+        paint.set_anti_alias(true);
+        
+        let colors_with_alpha: Vec<Color> = palette.iter()
+            .map(|c| Color::from_argb(alpha, c.r(), c.g(), c.b()))
+            .collect();
+
+        if colors_with_alpha.len() >= 2 {
+            let shader = gradient_shader::linear(
+                (Point::new(start_x, y - max_h/2.0), Point::new(start_x + 20.0, y + max_h/2.0)),
+                colors_with_alpha.as_slice(), None, TileMode::Mirror, None, None
+            ).unwrap();
+            paint.set_shader(shader);
+        } else {
+            paint.set_color(colors_with_alpha.get(0).cloned().unwrap_or(Color::WHITE));
+        }
+
+        for i in 0..bar_count {
+            let h = heights[i];
+            let rect = Rect::from_xywh(start_x + i as f32 * (bar_w + spacing), y - h / 2.0, bar_w, h);
+            canvas.draw_round_rect(rect, 1.5, 1.5, &paint);
+        }
+    });
+}
+
+fn get_palette_from_image(img: &Image, cache_key: &str) -> Vec<Color> {
+    COLOR_CACHE.with(|cache| {
+        let mut cache_mut = cache.borrow_mut();
+        if let Some(palette) = cache_mut.get(cache_key) { return palette.clone(); }
+        
+        let mut palette = Vec::new();
+        let info = skia_safe::ImageInfo::new(
+            skia_safe::ISize::new(img.width(), img.height()),
+            skia_safe::ColorType::RGBA8888,
+            skia_safe::AlphaType::Premul,
+            None,
+        );
+        let mut pixels = vec![0u8; (img.width() * img.height() * 4) as usize];
+        if img.read_pixels(&info, &mut pixels, (img.width() * 4) as usize, (0, 0), skia_safe::image::CachingHint::Allow) {
+            let step_x = img.width() / 4;
+            let step_y = img.height() / 4;
+            let mut r_total = 0u32;
+            let mut g_total = 0u32;
+            let mut b_total = 0u32;
+            let mut count = 0u32;
+
+            for y in 1..4 {
+                for x in 1..4 {
+                    let idx = ((y * step_y * img.width() + x * step_x) * 4) as usize;
+                    if idx + 2 < pixels.len() {
+                        r_total += pixels[idx] as u32;
+                        g_total += pixels[idx+1] as u32;
+                        b_total += pixels[idx+2] as u32;
+                        count += 1;
+                    }
+                }
+            }
+
+            if count > 0 {
+                let r_avg = (r_total / count) as f32;
+                let g_avg = (g_total / count) as f32;
+                let b_avg = (b_total / count) as f32;
+                
+                let brighten = |val: f32| -> u8 {
+                    let v = val * 1.5;
+                    (if v < 60.0 { v + 60.0 } else { v }).min(255.0) as u8
+                };
+
+                let primary = Color::from_rgb(brighten(r_avg), brighten(g_avg), brighten(b_avg));
+                let secondary = Color::from_rgb(
+                    brighten(r_avg * 0.7), 
+                    brighten(g_avg * 0.8), 
+                    brighten(b_avg * 1.2)
+                );
+                
+                palette.push(primary);
+                palette.push(secondary);
+                palette.push(primary);
+            }
         }
         
-        let mut current_w = 0.0;
-        let mut result = String::new();
-        for c in text.chars() {
-            let tf = get_typeface_for_char(c, style);
-            let font = Font::from_typeface(tf, size);
-            let (w, _) = font.measure_str(&c.to_string(), None);
-            if current_w + w > max_w - 10.0 {
-                result.push_str("...");
-                break;
-            }
-            current_w += w;
-            result.push(c);
-        }
-        cache.insert(key, result.clone());
-        result
+        if palette.is_empty() { palette.push(Color::from_rgb(200, 200, 200)); }
+        cache_mut.insert(cache_key.to_string(), palette.clone());
+        palette
     })
 }
 
@@ -183,16 +267,16 @@ fn draw_placeholder(canvas: &Canvas, x: f32, y: f32, size: f32, alpha: u8) {
     let mut paint = Paint::default();
     paint.set_anti_alias(true);
     paint.set_color(Color::from_argb((alpha as f32 * 0.1) as u8, 255, 255, 255));
-    canvas.draw_round_rect(Rect::from_xywh(x, y, size, size), 10.0, 10.0, &paint);
+    canvas.draw_round_rect(Rect::from_xywh(x, y, size, size), 12.0, 12.0, &paint);
     let cx = x + size/2.0; let cy = y + size/2.0;
     paint.set_color(Color::from_argb((alpha as f32 * 0.4) as u8, 255, 255, 255));
     let mut builder = PathBuilder::new();
-    builder.move_to(Point::new(cx - 3.0, cy + 5.0));
-    builder.line_to(Point::new(cx - 3.0, cy - 6.0));
-    builder.line_to(Point::new(cx + 4.0, cy - 8.0));
-    builder.line_to(Point::new(cx + 4.0, cy + 3.0));
+    builder.move_to(Point::new(cx - 5.0, cy + 8.0));
+    builder.line_to(Point::new(cx - 5.0, cy - 10.0));
+    builder.line_to(Point::new(cx + 6.0, cy - 13.0));
+    builder.line_to(Point::new(cx + 6.0, cy + 5.0));
     builder.close();
     canvas.draw_path(&builder.detach(), &paint);
-    canvas.draw_circle(Point::new(cx - 5.5, cy + 5.0), 2.5, &paint);
-    canvas.draw_circle(Point::new(cx + 1.5, cy + 3.0), 2.5, &paint);
+    canvas.draw_circle(Point::new(cx - 9.0, cy + 8.0), 4.0, &paint);
+    canvas.draw_circle(Point::new(cx + 2.0, cy + 5.0), 4.0, &paint);
 }

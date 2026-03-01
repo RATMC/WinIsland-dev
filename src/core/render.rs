@@ -1,11 +1,16 @@
-use skia_safe::{Color, Paint, Rect, RRect, surfaces, gradient_shader, Point, image_filters};
+use skia_safe::{Color, Paint, Rect, RRect, surfaces, gradient_shader, Point, image_filters, Surface as SkSurface};
 use softbuffer::Surface;
 use std::sync::Arc;
+use std::cell::RefCell;
 use winit::window::Window;
 use crate::core::config::PADDING;
 use crate::ui::expanded::main_view::draw_main_page;
 use crate::ui::expanded::tools_view::draw_tools_page;
 use crate::core::smtc::MediaInfo;
+
+thread_local! {
+    static SK_SURFACE: RefCell<Option<SkSurface>> = RefCell::new(None);
+}
 
 pub fn draw_island(
     surface: &mut Surface<Arc<Window>, Arc<Window>>,
@@ -21,27 +26,29 @@ pub fn draw_island(
     media: &MediaInfo,
 ) {
     let mut buffer = surface.buffer_mut().unwrap();
-    let mut sk_surface = surfaces::raster_n32_premul(skia_safe::ISize::new(os_w as i32, os_h as i32)).unwrap();
+    
+    let mut sk_surface = SK_SURFACE.with(|cell| {
+        let mut opt = cell.borrow_mut();
+        if let Some(ref s) = *opt {
+            if s.width() == os_w as i32 && s.height() == os_h as i32 {
+                return s.clone();
+            }
+        }
+        let new_surface = surfaces::raster_n32_premul(skia_safe::ISize::new(os_w as i32, os_h as i32)).unwrap();
+        *opt = Some(new_surface.clone());
+        new_surface
+    });
+
     let canvas = sk_surface.canvas();
     canvas.clear(Color::TRANSPARENT);
 
     let offset_x = (os_w as f32 - current_w) / 2.0;
     let offset_y = PADDING / 2.0;
-    
-    let rect = Rect::from_xywh(
-        offset_x, 
-        offset_y, 
-        current_w, 
-        current_h
-    );
+    let rect = Rect::from_xywh(offset_x, offset_y, current_w, current_h);
     let rrect = RRect::new_rect_xy(rect, current_r, current_r);
 
     let has_blur = sigmas.0 > 0.1 || sigmas.1 > 0.1;
-    let blur_filter = if has_blur {
-        image_filters::blur(sigmas, None, None, None)
-    } else {
-        None
-    };
+    let blur_filter = if has_blur { image_filters::blur(sigmas, None, None, None) } else { None };
 
     canvas.save();
     canvas.clip_rrect(rrect, skia_safe::ClipOp::Intersect, true);
@@ -49,30 +56,23 @@ pub fn draw_island(
     let mut bg_paint = Paint::default();
     bg_paint.set_color(Color::BLACK);
     bg_paint.set_anti_alias(true);
-    if has_blur {
-        if let Some(ref filter) = blur_filter {
-            let mut layer_paint = Paint::default();
-            layer_paint.set_image_filter(filter.clone());
-            canvas.save_layer(&skia_safe::canvas::SaveLayerRec::default().paint(&layer_paint));
-            canvas.draw_rrect(rrect, &bg_paint);
-            canvas.restore();
-        } else {
-            canvas.draw_rrect(rrect, &bg_paint);
-        }
+    
+    if let Some(ref filter) = blur_filter {
+        let mut layer_paint = Paint::default();
+        layer_paint.set_image_filter(filter.clone());
+        canvas.save_layer(&skia_safe::canvas::SaveLayerRec::default().paint(&layer_paint));
+        canvas.draw_rrect(rrect, &bg_paint);
+        canvas.restore();
     } else {
         canvas.draw_rrect(rrect, &bg_paint);
     }
 
     if expansion_progress > 0.01 {
-        let alpha_factor = (expansion_progress.powf(2.5)).clamp(0.0, 1.0);
-        let alpha = (alpha_factor * 255.0) as u8;
-        
-        if has_blur {
-            if let Some(ref filter) = blur_filter {
-                let mut layer_paint = Paint::default();
-                layer_paint.set_image_filter(filter.clone());
-                canvas.save_layer(&skia_safe::canvas::SaveLayerRec::default().paint(&layer_paint));
-            }
+        let alpha = (expansion_progress.powf(2.5).clamp(0.0, 1.0) * 255.0) as u8;
+        if let Some(ref filter) = blur_filter {
+            let mut layer_paint = Paint::default();
+            layer_paint.set_image_filter(filter.clone());
+            canvas.save_layer(&skia_safe::canvas::SaveLayerRec::default().paint(&layer_paint));
         }
 
         canvas.save();
@@ -85,9 +85,7 @@ pub fn draw_island(
         draw_tools_page(canvas, offset_x, offset_y, current_w, current_h, alpha);
         canvas.restore();
 
-        if has_blur {
-            canvas.restore();
-        }
+        if blur_filter.is_some() { canvas.restore(); }
     }
 
     let total_weight: f32 = weights.iter().sum();
@@ -107,20 +105,15 @@ pub fn draw_island(
             stroke_paint.set_style(skia_safe::paint::Style::Stroke);
             stroke_paint.set_stroke_width(1.3);
             stroke_paint.set_anti_alias(true);
-            if has_blur {
-                if let Some(ref filter) = blur_filter {
-                    stroke_paint.set_image_filter(filter.clone());
-                }
-            }
+            if let Some(ref filter) = blur_filter { stroke_paint.set_image_filter(filter.clone()); }
             canvas.draw_rrect(rrect, &stroke_paint);
         }
     }
-
     canvas.restore(); 
 
     let info = skia_safe::ImageInfo::new(skia_safe::ISize::new(os_w as i32, os_h as i32), skia_safe::ColorType::BGRA8888, skia_safe::AlphaType::Premul, None);
     let dst_row_bytes = (os_w * 4) as usize;
     let u8_buffer: &mut [u8] = bytemuck::cast_slice_mut(&mut *buffer);
-    let _ = sk_surface.read_pixels(&info, u8_buffer, dst_row_bytes, (0, 0));
+    sk_surface.read_pixels(&info, u8_buffer, dst_row_bytes, (0, 0));
     buffer.present().unwrap();
 }
