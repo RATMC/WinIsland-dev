@@ -26,7 +26,7 @@ export default defineConfig({
       }
     ],
     socialLinks: [
-      { icon: 'github', link: 'https://github.com/Administrator/WinIsland' }
+      { icon: 'github', link: 'https://github.com/Eatgrapes/WinIsland' }
     ],
     footer: {
       message: 'Released under the MIT License.',
