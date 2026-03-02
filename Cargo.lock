@@ -10,6 +10,7 @@ dependencies = [
  "cpal",
  "dirs",
  "image",
+ "once_cell",
  "open",
  "realfft",
  "rfd",

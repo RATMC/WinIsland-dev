@@ -28,6 +28,8 @@ pub struct AppConfig {
     pub auto_hide_delay: f32,
     #[serde(default = "default_check_for_updates")]
     pub check_for_updates: bool,
+    #[serde(default = "default_language")]
+    pub language: String,
 }
 
 fn default_show_lyrics() -> bool {
@@ -54,6 +56,10 @@ fn default_check_for_updates() -> bool {
     true
 }
 
+fn default_language() -> String {
+    "auto".to_string()
+}
+
 impl Default for AppConfig {
     fn default() -> Self {
         Self {
@@ -72,6 +78,7 @@ impl Default for AppConfig {
             auto_hide: false,
             auto_hide_delay: 5.0,
             check_for_updates: true,
+            language: "auto".to_string(),
         }
     }
 }

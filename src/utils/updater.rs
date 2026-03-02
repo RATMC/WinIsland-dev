@@ -6,6 +6,7 @@ use std::process::Command;
 use std::io::Read;
 use windows::core::PCWSTR;
 use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_OKCANCEL, MB_ICONINFORMATION, MB_TOPMOST, MB_SETFOREGROUND, IDOK, IDYES};
+use crate::core::i18n::tr;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct VersionInfo {
@@ -64,8 +65,8 @@ pub fn check_for_updates(config: &AppConfig) {
         }
 
         if needs_update {
-            let title: Vec<u16> = "Update Available\0".encode_utf16().collect();
-            let text: Vec<u16> = format!("A new version of WinIsland is available (Released: {}). Would you like to update now?\0", remote_info.timestamp).encode_utf16().collect();
+            let title: Vec<u16> = format!("{}\0", tr("update_available_title")).encode_utf16().collect();
+            let text: Vec<u16> = tr("update_available_desc").replace("{}", &remote_info.timestamp).add_null().encode_utf16().collect();
             
             let result = unsafe {
                 MessageBoxW(
@@ -83,12 +84,21 @@ pub fn check_for_updates(config: &AppConfig) {
     });
 }
 
+trait AddNull {
+    fn add_null(&self) -> String;
+}
+impl AddNull for String {
+    fn add_null(&self) -> String {
+        format!("{}\0", self)
+    }
+}
+
 fn perform_update(remote_json_str: String, app_dir: PathBuf) {
     let resp = match ureq::get(UPDATE_URL_EXE).call() {
         Ok(r) => r,
         Err(_) => {
-            let title: Vec<u16> = "Update Failed\0".encode_utf16().collect();
-            let text: Vec<u16> = "Failed to download the new version.\0".encode_utf16().collect();
+            let title: Vec<u16> = tr("update_failed_title").add_null().encode_utf16().collect();
+            let text: Vec<u16> = tr("update_failed_dl").add_null().encode_utf16().collect();
             unsafe {
                 MessageBoxW(None, PCWSTR(text.as_ptr()), PCWSTR(title.as_ptr()), MB_ICONINFORMATION | MB_TOPMOST);
             }
@@ -105,8 +115,8 @@ fn perform_update(remote_json_str: String, app_dir: PathBuf) {
     let new_exe_path = current_exe.with_extension("exe.new");
     
     if fs::write(&new_exe_path, &bytes).is_err() {
-        let title: Vec<u16> = "Update Failed\0".encode_utf16().collect();
-        let text: Vec<u16> = "Failed to save the new version.\0".encode_utf16().collect();
+        let title: Vec<u16> = tr("update_failed_title").add_null().encode_utf16().collect();
+        let text: Vec<u16> = tr("update_failed_save").add_null().encode_utf16().collect();
         unsafe {
             MessageBoxW(None, PCWSTR(text.as_ptr()), PCWSTR(title.as_ptr()), MB_ICONINFORMATION | MB_TOPMOST);
         }

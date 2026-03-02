@@ -4,4 +4,6 @@ pub mod render;
 pub mod smtc;
 pub mod audio;
 pub mod lyrics;
+pub mod i18n;
+
 

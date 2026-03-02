@@ -1,5 +1,6 @@
 use crate::core::config::{AppConfig, APP_AUTHOR, APP_HOMEPAGE, APP_VERSION};
 use crate::core::persistence::save_config;
+use crate::core::i18n::{tr, set_lang, current_lang};
 use crate::utils::color::*;
 use skia_safe::{surfaces, Color, Font, FontMgr, FontStyle, Paint, Rect};
 use softbuffer::{Context, Surface};
@@ -53,7 +54,7 @@ impl SettingsApp {
             logical_mouse_pos: (0.0, 0.0),
             font_mgr: FontMgr::new(),
             custom_font_typeface: None,
-            custom_font_path_cache: Option::<String>::None,
+            custom_font_path_cache: None,
             frame_count: 0,
             scroll_y: 0.0,
             target_scroll_y: 0.0,
@@ -116,7 +117,7 @@ impl SettingsApp {
             self.draw_general(canvas);
             canvas.restore();
 
-            let content_h = if self.config.auto_hide { 800.0 } else { 750.0 };
+            let content_h = if self.config.auto_hide { 850.0 } else { 800.0 };
             let view_h = SETTINGS_H - 70.0;
             if content_h > view_h {
                 let bar_h = (view_h / content_h) * view_h;
@@ -144,7 +145,7 @@ impl SettingsApp {
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
         let center_x = SETTINGS_W / 2.0;
-        let tabs = ["General", "About"];
+        let tabs = [tr("tab_general"), tr("tab_about")];
         paint.set_color(COLOR_CARD);
         canvas.draw_round_rect(Rect::from_xywh(center_x - 85.0, 20.0, 170.0, 36.0), 10.0, 10.0, &paint);
         for (i, label) in tabs.iter().enumerate() {
@@ -165,11 +166,11 @@ impl SettingsApp {
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
         let items = [
-            ("Global Scale", format!("{:.2}", self.config.global_scale)),
-            ("Base Width", self.config.base_width.to_string()),
-            ("Base Height", self.config.base_height.to_string()),
-            ("Expanded Width", self.config.expanded_width.to_string()),
-            ("Expanded Height", self.config.expanded_height.to_string()),
+            (tr("global_scale"), format!("{:.2}", self.config.global_scale)),
+            (tr("base_width"), self.config.base_width.to_string()),
+            (tr("base_height"), self.config.base_height.to_string()),
+            (tr("expanded_width"), self.config.expanded_width.to_string()),
+            (tr("expanded_height"), self.config.expanded_height.to_string()),
         ];
         let start_y = 90.0;
         for (i, (label, val)) in items.iter().enumerate() {
@@ -177,7 +178,7 @@ impl SettingsApp {
             paint.set_color(COLOR_CARD);
             canvas.draw_round_rect(Rect::from_xywh(20.0, y - 5.0, SETTINGS_W - 40.0, 42.0), 10.0, 10.0, &paint);
             paint.set_color(COLOR_TEXT_PRI);
-            canvas.draw_str(label, (35.0, y + 21.0), &font, &paint);
+            canvas.draw_str(&label, (35.0, y + 21.0), &font, &paint);
             self.draw_button(canvas, 270.0, y + 2.0, "-");
             paint.set_color(COLOR_TEXT_PRI);
             let (_, rect) = font.measure_str(&val, None);
@@ -188,51 +189,59 @@ impl SettingsApp {
         paint.set_color(COLOR_CARD);
         canvas.draw_round_rect(Rect::from_xywh(20.0, sw_border_y - 5.0, SETTINGS_W - 40.0, 42.0), 10.0, 10.0, &paint);
         paint.set_color(COLOR_TEXT_PRI);
-        canvas.draw_str("Adaptive Border", (35.0, sw_border_y + 21.0), &font, &paint);
+        canvas.draw_str(&tr("adaptive_border"), (35.0, sw_border_y + 21.0), &font, &paint);
         self.draw_switch(canvas, 326.0, sw_border_y + 3.0, self.border_switch_pos);
+        
         let sw_blur_y = sw_border_y + 50.0;
         paint.set_color(COLOR_CARD);
         canvas.draw_round_rect(Rect::from_xywh(20.0, sw_blur_y - 5.0, SETTINGS_W - 40.0, 42.0), 10.0, 10.0, &paint);
         paint.set_color(COLOR_TEXT_PRI);
-        canvas.draw_str("Motion Blur", (35.0, sw_blur_y + 21.0), &font, &paint);
+        canvas.draw_str(&tr("motion_blur"), (35.0, sw_blur_y + 21.0), &font, &paint);
         self.draw_switch(canvas, 326.0, sw_blur_y + 3.0, self.blur_switch_pos);
         
         let font_y = sw_blur_y + 50.0;
         paint.set_color(COLOR_CARD);
         canvas.draw_round_rect(Rect::from_xywh(20.0, font_y - 5.0, SETTINGS_W - 40.0, 42.0), 10.0, 10.0, &paint);
         paint.set_color(COLOR_TEXT_PRI);
-        canvas.draw_str("Custom Font", (35.0, font_y + 21.0), &font, &paint);
-        self.draw_text_button(canvas, 310.0, font_y + 3.0, 65.0, 26.0, "Select");
+        canvas.draw_str(&tr("custom_font"), (35.0, font_y + 21.0), &font, &paint);
+        self.draw_text_button(canvas, 310.0, font_y + 3.0, 65.0, 26.0, &tr("font_select"));
         if self.config.custom_font_path.is_some() {
-            self.draw_text_button_danger(canvas, 235.0, font_y + 3.0, 65.0, 26.0, "Reset");
+            self.draw_text_button_danger(canvas, 235.0, font_y + 3.0, 65.0, 26.0, &tr("font_reset"));
         }
 
         let autostart_y = font_y + 50.0;
         paint.set_color(COLOR_CARD);
         canvas.draw_round_rect(Rect::from_xywh(20.0, autostart_y - 5.0, SETTINGS_W - 40.0, 42.0), 10.0, 10.0, &paint);
         paint.set_color(COLOR_TEXT_PRI);
-        canvas.draw_str("Start at Boot", (35.0, autostart_y + 21.0), &font, &paint);
+        canvas.draw_str(&tr("start_boot"), (35.0, autostart_y + 21.0), &font, &paint);
         self.draw_switch(canvas, 326.0, autostart_y + 3.0, self.autostart_switch_pos);
 
         let autohide_y = autostart_y + 50.0;
         paint.set_color(COLOR_CARD);
         canvas.draw_round_rect(Rect::from_xywh(20.0, autohide_y - 5.0, SETTINGS_W - 40.0, 42.0), 10.0, 10.0, &paint);
         paint.set_color(COLOR_TEXT_PRI);
-        canvas.draw_str("Auto Hide", (35.0, autohide_y + 21.0), &font, &paint);
+        canvas.draw_str(&tr("auto_hide"), (35.0, autohide_y + 21.0), &font, &paint);
         self.draw_switch(canvas, 326.0, autohide_y + 3.0, if self.config.auto_hide { 1.0 } else { 0.0 });
 
         let update_y = autohide_y + 50.0;
         paint.set_color(COLOR_CARD);
         canvas.draw_round_rect(Rect::from_xywh(20.0, update_y - 5.0, SETTINGS_W - 40.0, 42.0), 10.0, 10.0, &paint);
         paint.set_color(COLOR_TEXT_PRI);
-        canvas.draw_str("Check for Updates", (35.0, update_y + 21.0), &font, &paint);
+        canvas.draw_str(&tr("check_updates"), (35.0, update_y + 21.0), &font, &paint);
         self.draw_switch(canvas, 326.0, update_y + 3.0, self.update_switch_pos);
 
-        let delay_y = update_y + 50.0;
+        let lang_y = update_y + 50.0;
+        paint.set_color(COLOR_CARD);
+        canvas.draw_round_rect(Rect::from_xywh(20.0, lang_y - 5.0, SETTINGS_W - 40.0, 42.0), 10.0, 10.0, &paint);
+        paint.set_color(COLOR_TEXT_PRI);
+        canvas.draw_str(&tr("language"), (35.0, lang_y + 21.0), &font, &paint);
+        self.draw_text_button(canvas, 300.0, lang_y + 3.0, 75.0, 26.0, &tr("lang_name"));
+
+        let delay_y = lang_y + 50.0;
         paint.set_color(COLOR_CARD);
         canvas.draw_round_rect(Rect::from_xywh(20.0, delay_y - 5.0, SETTINGS_W - 40.0, 42.0), 10.0, 10.0, &paint);
         paint.set_color(if self.config.auto_hide { COLOR_TEXT_PRI } else { COLOR_TEXT_SEC });
-        canvas.draw_str("Hide Delay (s)", (35.0, delay_y + 21.0), &font, &paint);
+        canvas.draw_str(&tr("hide_delay"), (35.0, delay_y + 21.0), &font, &paint);
         let delay_str = format!("{:.0}", self.config.auto_hide_delay);
         self.draw_button(canvas, 270.0, delay_y + 2.0, "-");
         let (_, rect) = font.measure_str(&delay_str, None);
@@ -240,10 +249,10 @@ impl SettingsApp {
         self.draw_button(canvas, 345.0, delay_y + 2.0, "+");
 
         paint.set_color(COLOR_DANGER);
-        let reset_str = "Reset to Defaults";
-        let (_, rect) = font.measure_str(reset_str, None);
-        let reset_y = if self.config.auto_hide { 760.0 } else { 710.0 };
-        canvas.draw_str(reset_str, ((SETTINGS_W - rect.width()) / 2.0, reset_y), &font, &paint);
+        let reset_str = tr("reset_defaults");
+        let (_, rect) = font.measure_str(&reset_str, None);
+        let reset_y = if self.config.auto_hide { 810.0 } else { 760.0 };
+        canvas.draw_str(&reset_str, ((SETTINGS_W - rect.width()) / 2.0, reset_y), &font, &paint);
     }
     fn draw_text_button_danger(&self, canvas: &skia_safe::Canvas, x: f32, y: f32, w: f32, h: f32, label: &str) {
         let mut paint = Paint::default();
@@ -300,13 +309,13 @@ impl SettingsApp {
         let v_str = format!("Version {}", APP_VERSION);
         let (_, rect2) = font_norm.measure_str(&v_str, None);
         canvas.draw_str(&v_str, ((SETTINGS_W - rect2.width()) / 2.0, 195.0), &font_norm, &paint);
-        let a_str = format!("Created by {}", APP_AUTHOR);
+        let a_str = format!("{} {}", tr("Created by"), APP_AUTHOR);
         let (_, rect3) = font_norm.measure_str(&a_str, None);
         canvas.draw_str(&a_str, ((SETTINGS_W - rect3.width()) / 2.0, 220.0), &font_norm, &paint);
         paint.set_color(COLOR_ACCENT);
-        let link_str = "Visit Project Homepage";
-        let (_, rect4) = font_norm.measure_str(link_str, None);
-        canvas.draw_str(link_str, ((SETTINGS_W - rect4.width()) / 2.0, 280.0), &font_norm, &paint);
+        let link_str = tr("visit_homepage");
+        let (_, rect4) = font_norm.measure_str(&link_str, None);
+        canvas.draw_str(&link_str, ((SETTINGS_W - rect4.width()) / 2.0, 280.0), &font_norm, &paint);
     }
     fn handle_click(&mut self) {
         let (mx, my) = self.logical_mouse_pos;
@@ -375,14 +384,21 @@ impl SettingsApp {
                 self.config.check_for_updates = !self.config.check_for_updates;
                 changed = true;
             }
-            let delay_y = update_y + 50.0;
+            let lang_y = update_y + 50.0;
+            if Self::in_rect(mx, content_my, 300.0, lang_y + 3.0, 75.0, 26.0) {
+                self.config.language = if current_lang() == "zh" { "en".to_string() } else { "zh".to_string() };
+                set_lang(&self.config.language);
+                changed = true;
+            }
+            let delay_y = lang_y + 50.0;
             if self.config.auto_hide {
                 self.check_btn(mx, content_my, 270.0, delay_y + 2.0, |c| c.auto_hide_delay = (c.auto_hide_delay - 1.0).max(1.0), &mut changed);
                 self.check_btn(mx, content_my, 345.0, delay_y + 2.0, |c| c.auto_hide_delay = (c.auto_hide_delay + 1.0).min(60.0), &mut changed);
             }
-            let reset_y = if self.config.auto_hide { 760.0 } else { 710.0 };
+            let reset_y = if self.config.auto_hide { 810.0 } else { 760.0 };
             if mx >= cx - 100.0 && mx <= cx + 100.0 && content_my >= reset_y - 24.0 && content_my <= reset_y + 12.0 {
                 self.config = AppConfig::default();
+                set_lang(if self.config.language == "auto" { "en" } else { &self.config.language });
                 self.refresh_custom_font_cache();
                 changed = true;
             }
@@ -390,7 +406,7 @@ impl SettingsApp {
             let _ = open::that(APP_HOMEPAGE);
         }
         if changed {
-            let content_h = if self.config.auto_hide { 800.0 } else { 750.0 };
+            let content_h = if self.config.auto_hide { 850.0 } else { 800.0 };
             let max_scroll = (content_h - (SETTINGS_H - 70.0)).max(0.0);
             self.target_scroll_y = self.target_scroll_y.clamp(0.0, max_scroll);
             self.scroll_y = self.scroll_y.clamp(0.0, max_scroll);
@@ -439,7 +455,7 @@ impl ApplicationHandler for SettingsApp {
                         winit::event::MouseScrollDelta::PixelDelta(pos) => pos.y as f32,
                     };
                     self.target_scroll_y -= diff;
-                    let content_h = if self.config.auto_hide { 800.0 } else { 750.0 };
+                    let content_h = if self.config.auto_hide { 850.0 } else { 800.0 };
                     let max_scroll = (content_h - (SETTINGS_H - 70.0)).max(0.0);
                     self.target_scroll_y = self.target_scroll_y.clamp(0.0, max_scroll);
                     if let Some(win) = &self.window { win.request_redraw(); }
@@ -469,7 +485,7 @@ impl ApplicationHandler for SettingsApp {
             if (tas - self.autostart_switch_pos).abs() > 0.01 { self.autostart_switch_pos += (tas - self.autostart_switch_pos) * 0.2; redraw = true; }
             let tcu = if self.config.check_for_updates { 1.0 } else { 0.0 };
             if (tcu - self.update_switch_pos).abs() > 0.01 { self.update_switch_pos += (tcu - self.update_switch_pos) * 0.2; redraw = true; }
-            let content_h = if self.config.auto_hide { 800.0 } else { 750.0 };
+            let content_h = if self.config.auto_hide { 850.0 } else { 800.0 };
             let max_scroll = (content_h - (SETTINGS_H - 70.0)).max(0.0);
             self.target_scroll_y = self.target_scroll_y.clamp(0.0, max_scroll);
             if (self.target_scroll_y - self.scroll_y).abs() > 0.1 {

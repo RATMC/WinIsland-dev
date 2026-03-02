@@ -11,13 +11,16 @@ use windows::Win32::Foundation::GetLastError;
 use windows::Win32::Foundation::ERROR_ALREADY_EXISTS;
 use windows::Win32::System::Threading::CreateMutexW;
 use winit::event_loop::EventLoop;
+use crate::core::i18n::init_i18n;
+
 fn main() {
+    let config = crate::core::persistence::load_config();
+    init_i18n(&config.language);
+
     let args: Vec<String> = env::args().collect();
     if args.iter().any(|arg| arg == "--settings") {
-        let config = crate::core::persistence::load_config();
         crate::window::settings::run_settings(config);
     } else if args.iter().any(|arg| arg == "--music-settings") {
-        let config = crate::core::persistence::load_config();
         crate::window::music_settings::run_music_settings(config);
     } else {
         unsafe {
@@ -26,7 +29,6 @@ fn main() {
                 return;
             }
         }
-        let config = crate::core::persistence::load_config();
         crate::utils::updater::check_for_updates(&config);
         
         let event_loop = EventLoop::new().unwrap();
@@ -34,4 +36,3 @@ fn main() {
         event_loop.run_app(&mut app).unwrap();
     }
 }
-

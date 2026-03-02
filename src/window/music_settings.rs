@@ -1,5 +1,6 @@
 use crate::core::config::AppConfig;
 use crate::core::persistence::save_config;
+use crate::core::i18n::tr;
 use crate::utils::color::*;
 use skia_safe::{surfaces, Color, Font, FontMgr, FontStyle, Paint, Rect};
 use softbuffer::{Context, Surface};
@@ -90,15 +91,15 @@ impl MusicApp {
         let mut paint = Paint::default();
         paint.set_anti_alias(true);
         paint.set_color(COLOR_TEXT_PRI);
-        canvas.draw_str("Music Settings", (25.0, 45.0), &font_title, &paint);
+        canvas.draw_str(&tr("music_settings_title"), (25.0, 45.0), &font_title, &paint);
         paint.set_color(COLOR_CARD);
         canvas.draw_round_rect(Rect::from_xywh(20.0, 70.0, MUSIC_W - 40.0, 100.0), 12.0, 12.0, &paint);
         let font_item = self.get_font(15.0, false);
         paint.set_color(COLOR_TEXT_PRI);
-        canvas.draw_str("SMTC Control", (40.0, 102.0), &font_item, &paint);
+        canvas.draw_str(&tr("smtc_control"), (40.0, 102.0), &font_item, &paint);
         self.draw_switch(canvas, 325.0, 82.0, self.switch_pos);
         
-        canvas.draw_str("Show Lyrics", (40.0, 152.0), &font_item, &paint);
+        canvas.draw_str(&tr("show_lyrics"), (40.0, 152.0), &font_item, &paint);
         self.draw_switch(canvas, 325.0, 132.0, self.lyrics_switch_pos);
 
         let enabled = self.config.smtc_enabled;
@@ -106,12 +107,12 @@ impl MusicApp {
         let sec_color = if enabled { COLOR_TEXT_SEC } else { COLOR_DISABLED };
         paint.set_color(sec_color);
         let font_sec = self.get_font(12.0, true);
-        canvas.draw_str("MEDIA APPLICATIONS", (30.0, 205.0), &font_sec, &paint);
-        self.draw_text_button(canvas, MUSIC_W - 130.0, 190.0, 110.0, 24.0, "Scan Apps", enabled);
+        canvas.draw_str(&tr("media_apps"), (30.0, 205.0), &font_sec, &paint);
+        self.draw_text_button(canvas, MUSIC_W - 130.0, 190.0, 110.0, 24.0, &tr("scan_apps"), enabled);
         let mut current_y = 220.0;
         if self.detected_apps.is_empty() {
             paint.set_color(sec_color);
-            canvas.draw_str("No sessions detected", (40.0, current_y + 25.0), &font_item, &paint);
+            canvas.draw_str(&tr("no_sessions"), (40.0, current_y + 25.0), &font_item, &paint);
         } else {
             for app in &self.detected_apps {
                 paint.set_color(COLOR_CARD);
@@ -123,8 +124,11 @@ impl MusicApp {
                 let display_name = app.split('!').next().unwrap_or(app);
                 canvas.draw_str(display_name, (65.0, current_y + 27.0), &font_item, &paint);
                 if enabled {
+                    let del_font = self.get_font(12.0, false);
+                    let del_str = tr("delete");
+                    let (_, rect) = del_font.measure_str(&del_str, None);
                     paint.set_color(COLOR_DANGER);
-                    canvas.draw_str("Delete", (335.0, current_y + 27.0), &self.get_font(12.0, false), &paint);
+                    canvas.draw_str(&del_str, (MUSIC_W - 35.0 - rect.width(), current_y + 27.0), &del_font, &paint);
                 }
                 current_y += 50.0;
                 if current_y > MUSIC_H - 50.0 { break; }
@@ -211,7 +215,7 @@ impl MusicApp {
 impl ApplicationHandler for MusicApp {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let attrs = Window::default_attributes()
-            .with_title("Music Settings")
+            .with_title(tr("music_settings_title"))
             .with_inner_size(LogicalSize::new(MUSIC_W as f64, MUSIC_H as f64))
             .with_resizable(false)
             .with_window_icon(get_app_icon());
@@ -267,4 +271,3 @@ pub fn run_music_settings(config: AppConfig) {
     let mut app = MusicApp::new(config);
     el.run_app(&mut app).unwrap();
 }
-
